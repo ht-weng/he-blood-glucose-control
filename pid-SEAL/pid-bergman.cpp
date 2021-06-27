@@ -249,146 +249,118 @@ inline vector<double> get_column(vector<vector<double>> matrix, int index) {
 
 // Recursive PID controller
 // g only contains the G(t) and G(t-1)
-inline tuple<Ciphertext, Ciphertext> pid_controller_recursive(vector<Ciphertext>& g, Ciphertext g_target, CKKSEncoder &encoder,
-        Evaluator &evaluator, Decryptor &decryptor, RelinKeys &relin_keys, double scale, Ciphertext prev_sum) {
+inline tuple<Ciphertext, Ciphertext> pid_controller_recursive(vector<Ciphertext>& Gs, Ciphertext I_t_1, bool day_flag, CKKSEncoder &encoder,
+        Evaluator &evaluator, Decryptor &decryptor, RelinKeys &relin_keys, double scale) {
 
     // Encrypt parameters
-    Plaintext u0, Kp, Ki_tor_i, Kd, neg_one;
-    encoder.encode((16.67), scale, u0);
-    encoder.encode((0.5), scale, Kp);
-    encoder.encode((0.01), scale, Ki_tor_i);
-    encoder.encode((0.05), scale, Kd);
+    Plaintext K_P, K_P_T_I, K_P_T_D, G_target, neg_one;
+    encoder.encode((0.28518519), scale, K_P);
     encoder.encode((-1), scale, neg_one);
+    if (day_flag == true) {
+        encoder.encode((0.00063374), scale, K_P_T_I);
+        encoder.encode((0.00316872), scale, K_P_T_D);
+        encoder.encode((5.0), scale, G_target);
+    } else {
+        encoder.encode((0.00190123), scale, K_P_T_I);
+        encoder.encode((0.00475309), scale, K_P_T_D);
+        encoder.encode((6.11), scale, G_target);
+    }
 
-    Ciphertext result_encrypted, gt_1, gt_2, first_term, second_term, third_term, cur_sum, dif;
+    Ciphertext U_t, error_1, error_2, P_term, I_term, D_term;
 
-    // G(t)
-    gt_1 = g[1];
-    // G(t-1)
-    gt_2 = g[0];
+    // e(t) = G(t) - G_target
+    // e(t-1) = G(t-1) - G_target
+    evaluator.sub_plain(Gs[1], G_target, error_1);
+    evaluator.sub_plain(Gs[0], G_target, error_2);
 
-    // e(t) = G(t) - g_target
-    // e(t-1) = G(t-1) - g_target
-    Ciphertext et_1, et_2;
-    evaluator.sub(gt_1, g_target, et_1);
-    evaluator.sub(gt_2, g_target, et_2);
+    // K_P * e(t)
+    evaluator.multiply_plain(error_1, K_P, P_term);
+    evaluator.rescale_to_next_inplace(P_term);
+    P_term.scale() = scale;
 
-    // Kp * e(t)
-    evaluator.multiply_plain(et_1, Kp, first_term);
-    evaluator.rescale_to_next_inplace(first_term);
-    first_term.scale() = scale;
+    // I_t = (K_P / T_I) * error_1 + I_t_1
+    evaluator.multiply_plain(error_1, K_P_T_I, I_term);
+    evaluator.rescale_to_next_inplace(I_term);
+    I_term.scale() = scale;
+    evaluator.mod_switch_to_inplace(I_t_1, I_term.parms_id());
+    evaluator.add_inplace(I_term, I_t_1);
 
-    // Ki * sum(e) / tor_i
-    evaluator.mod_switch_to_inplace(prev_sum, et_1.parms_id());
-    evaluator.add(et_1, prev_sum, cur_sum);
-    evaluator.multiply_plain(cur_sum, Ki_tor_i, second_term);
-    evaluator.rescale_to_next_inplace(second_term);
-    second_term.scale() = scale;
-
-    // Kd * (e(t) - e(t-1))
-    // evaluator.multiply_plain(et_2, neg_one, third_term);
-    // evaluator.rescale_to_next_inplace(third_term);
-    // third_term.scale() = scale;
-    // evaluator.mod_switch_to_inplace(et_1, third_term.parms_id());
-    // evaluator.add_inplace(third_term, et_1);
-    evaluator.sub(et_1, et_2, third_term);
-    // evaluator.mod_switch_to_inplace(Kd, third_term.parms_id());
-    evaluator.multiply_plain_inplace(third_term, Kd);
-    evaluator.rescale_to_next_inplace(third_term);
-    third_term.scale() = scale;
+    // (K_P / T_D) * (error_1 - error_2)
+    evaluator.sub(error_1, error_2, D_term);
+    evaluator.multiply_plain_inplace(D_term, K_P_T_D);
+    evaluator.rescale_to_next_inplace(D_term);
+    D_term.scale() = scale;
 
     // Add all
-    evaluator.add(first_term, second_term, result_encrypted);
-    // evaluator.mod_switch_to_inplace(result_encrypted, third_term.parms_id());
-    evaluator.add_inplace(result_encrypted, third_term);
-    evaluator.mod_switch_to_inplace(u0, result_encrypted.parms_id());
-    evaluator.add_plain_inplace(result_encrypted, u0);
+    evaluator.add(P_term, I_term, U_t);
+    evaluator.add_inplace(U_t, D_term);
 
-    // Return PID signal and current sum of errors
-    return make_tuple(result_encrypted, cur_sum);
+    // Return PID signal and I(t)
+    return make_tuple(U_t, I_term);
 }
 
 
 // Recursive PID controller
-// g only contains the G(t) and G(t-1)
-inline tuple<double, double> pid_controller_recursive_plain(vector<double>& g, double g_target, double prev_sum) {
+// Gs only contains the G(t) and G(t-1)
+inline tuple<double, double> pid_controller_recursive_plain(vector<double>& Gs, double I_t_1, bool day_flag) {
 
     // Parameters
-    double u0, Kp, Ki_tor_i, Kd, gt_1, gt_2, et_1, et_2, ut, cur_sum;
-    u0 = 16.67;
-    Kp = 0.5;
-    Ki_tor_i = 0.01;
-    Kd = 0.05;
-
-    // G(t)
-    gt_1 = g[1];
-    // G(t-1)
-    gt_2 = g[0];
+    double K_P, K_P_T_I, K_P_T_D, G_target, U_t, I_t, error_1, error_2;
+    K_P = 0.28518519;
+    if (day_flag == true) {
+        K_P_T_I = 0.00063374;
+        K_P_T_D = 0.00316872;
+        G_target = 5.0;
+    } else {
+        K_P_T_I = 0.00190123;
+        K_P_T_D = 0.00475309;
+        G_target = 6.11;
+    }
 
     // e(t) = G(t) - g_target
     // e(t-1) = G(t-1) - g_target
-    et_1 = gt_1 - g_target;
-    et_2 = gt_2 - g_target;
+    error_1 = Gs[1] - G_target;
+    error_2 = Gs[0] - G_target;
 
-    cur_sum = et_1 + prev_sum;
+    I_t = K_P_T_I * error_1 + I_t_1;
 
-    ut = u0 + Kp * et_1 + Ki_tor_i * cur_sum + Kd * (et_1 - et_2);
+    U_t = K_P * error_1 + I_t + K_P_T_D * (error_1 - error_2);
 
-    if (ut < 0) {
-        ut = 0;
+    if (U_t < 0) {
+        U_t = 0;
+    } else {
+        U_t = 16.67 * U_t;
     }
 
     // Return ut and current sum of errors
-    return make_tuple(ut, cur_sum);
+    return make_tuple(U_t, I_t);
 }
-
 
 // Bergman Minimal Model
-inline vector<double> bergman(vector<vector<double>>& x, double U, double D) {
+inline vector<double> bergman(vector<vector<double>>& y, double U, double D) {
     // The last glucose signal G
-    double G = x[x.size()-1][0];
+    double G = y[y.size()-1][0];
     // The last insulin remote compartmen signal X
-    double X = x[x.size()-1][1];
+    double X = y[y.size()-1][1];
     // The last insulin signal I
-    double I = x[x.size()-1][2];
+    double I = y[y.size()-1][2];
 
     // Parameters
-    double G0 = 4.5;
-    double X0 = 15.0;
-    double I0 = 15.0;
-    // For T1D, Some papers P1 = 0 to T1D
-    double P1 = 0.028735;
-    double P2 = 0.028344;
-    double P3 = 5.035e-05;
-    double VI = 12.0;
-    double n = 0.09259259;
+    double G_b = 4.5;
+    double X_b = 15.0;
+    double I_b = 15.0;
+    double P_1 = -0.028;
+    double P_2 = -0.025;
+    double P_3 = 0.000005;
+    double V_I = 12.0;
+    double n = 0.09;
     // Minimal Model
-    double Gdt = -P1 * (G - G0) - (X - X0) * G + D;
-    double Xdt = -P2 * (X - X0) + P3 * (I - I0);
-    double Idt = -n * I + U/VI;
+    double Gdt = P_1 * (G - G_b) - (X - X_b) * G + D;
+    double Xdt = P_2 * (X - X_b) + P_3 * (I - I_b);
+    double Idt = -n * I + U/V_I;
 
-    vector<double> dx_dt{Gdt, Xdt, Idt};
-    return dx_dt;
-}
-
-// Create a meal profile to simulate one afternoon of diabetes patient
-inline double meal_profile(int t) {
-    double m;
-    if (t < 100) {
-        m = 0.0;
-    } else if (t >= 100 & t < 9000){
-        // Lunch
-        m = 2.0 * exp(double(-0.001 * double(t-100)));
-    } else if (t >= 9000 & t < 16000) {
-        // Snack
-        m = 1.0 * exp(double(-0.001 * double(t-9000)));
-    } else if (t >= 16000 & t < 21600) {
-        // Dinner
-        m = 2.0 * exp(double(-0.001 * double(t-16000)));
-    } else {
-        m = 0.0;
-    }
-    return m;
+    vector<double> dy_dt{Gdt, Xdt, Idt};
+    return dy_dt;
 }
 
 int main() {
@@ -396,8 +368,8 @@ int main() {
     EncryptionParameters parms(scheme_type::ckks);
     size_t poly_modulus_degree = 8192;
     parms.set_poly_modulus_degree(poly_modulus_degree);
-    parms.set_coeff_modulus(CoeffModulus::Create(poly_modulus_degree, { 60, 40, 40, 60 }));
-    double scale = pow(2.0, 40);
+    parms.set_coeff_modulus(CoeffModulus::Create(poly_modulus_degree, { 50, 30, 30, 30, 50 }));
+    double scale = pow(2.0, 30);
     SEALContext context(parms);
     print_parameters(context);
     cout << endl;
@@ -419,144 +391,176 @@ int main() {
     cout << "Number of slots: " << slot_count << endl;
     cout << endl;
 
-    // Apply recursive PID on Bergman Minimal Model
-    // Only the last two errors and the previous sum are passed into the algorithm
-    cout << "Applying recursive PID controller" << endl;
-    auto recpid_start = high_resolution_clock::now();
+    cout << "Reading meal profile" << endl;
+    vector<double> meal_profile = csv2vec("../data/meal_profile_1.csv");
+    cout << "Meal profile imported" << endl;
 
-    // Total time (seconds)
-    int time_limit = 21600;
+    // Total time (mins) is defined by the length of meal profile
+    int time_limit = meal_profile.size();
 
+
+    cout << "Plaintext simulation starts" << endl;
     // Set up initial conditions
-    vector<double> x0{4.5, 15.0, 15.0};
-    vector<double> x1{4.5, 15.0, 15.0};
-    vector<vector<double>> x{x0, x1};
+    vector<double> y0_plaintext{4.5, 15.0, 15.0};
+    vector<double> y1_plaintext{4.5, 15.0, 15.0};
+    vector<vector<double>> y_plaintext{y0_plaintext, y1_plaintext};
+    vector<double> U_plaintext;
 
-    // Set point of blood glucose level
-    double g_target = 6.0;
-    Plaintext g_target_plain;
-    Ciphertext g_target_encrypted;
-    encoder.encode(g_target, scale, g_target_plain);
-    encryptor.encrypt(g_target_plain, g_target_encrypted);
+    double I_t_1_plaintext = 0.0;
+    // Simulation
+    for (int t = 0; t < time_limit; t++) {
+        // Determine whether it is day or night
+        bool day_flag;
+        if (t % 1800 <= 900) {
+            day_flag = true;
+        } else {
+            day_flag = false;
+        }
 
-    // Meal profiles
-    vector<double> m;
-    for (int i = 0; i < time_limit; i++) {
-        m.push_back(meal_profile(i));
+        vector<double> dy_dt_plaintext;
+        tuple<double, double> res_tup_plaintext;
+        double U_t_plaintext;
+        
+        // Get G(t) and G(t-1)
+        double G_t_1_plaintext = y_plaintext[y_plaintext.size()-1][0];
+        double G_t_2_plaintext = y_plaintext[y_plaintext.size()-2][0];
+        vector<double> Gs_plaintext{G_t_2_plaintext, G_t_1_plaintext};
+
+        cout << "Time point (min): " << t << endl;
+        cout << "Current glucose level: " << G_t_1_plaintext << endl;
+
+
+        // Apply PID
+        res_tup_plaintext = pid_controller_recursive_plain(Gs_plaintext, I_t_1_plaintext, day_flag);
+        
+        // Get the insulin infusion signal
+        U_t_plaintext = get<0>(res_tup_plaintext);
+        U_plaintext.push_back(U_t_plaintext);
+        // Get I(t) for the recursive sum of the integral term
+        I_t_1_plaintext = get<1>(res_tup_plaintext);
+
+        // Bergman Minimal Model simulation
+        dy_dt_plaintext = bergman(y_plaintext, U_t_plaintext, meal_profile[t]);
+        
+        // y(t) = y(t-1) + dy/dt
+        vector<double> yt_plaintext;
+        for (int i = 0; i < 3; i++) {
+            yt_plaintext.push_back(y_plaintext[y_plaintext.size()-1][i]+dy_dt_plaintext[i]);
+        }
+        
+        // Append yt to y
+        y_plaintext.push_back(yt_plaintext);
     }
 
-    // Initialise previous sum
+    cout << "Plaintext simulation ends" << endl;
+
+    // Apply recursive PID on Bergman Minimal Model
+    // Only the last two errors and the previous sum are passed into the algorithm
+    cout << "Encrypted simulation starts" << endl;
+    auto recpid_start = high_resolution_clock::now();
+
+    // Set up initial conditions
+    vector<double> y0{4.5, 15.0, 15.0};
+    vector<double> y1{4.5, 15.0, 15.0};
+    vector<vector<double>> y{y0, y1};
+    vector<double> U;
+
+    // Initialise I(t-1)
     double zero = 0.0;
     Plaintext zero_plain;
     Ciphertext zero_encrypted;
     encoder.encode(zero, scale, zero_plain);
     encryptor.encrypt(zero_plain, zero_encrypted);
-    Ciphertext prev_sum_encrypted;
-    prev_sum_encrypted = zero_encrypted;
+    Ciphertext I_t_1_encrypted;
+    I_t_1_encrypted = zero_encrypted;
 
 
     // Simulation
     for (int t = 0; t < time_limit; t++) {
-        vector<double> dx_dt;
-        tuple<Ciphertext, Ciphertext> tup;
-        Ciphertext ut_encrypted;
-        Plaintext ut_plain;
-        vector<double> ut;
+        // Determine whether it is day or night
+        bool day_flag;
+        if (t % 1800 <= 900) {
+            day_flag = true;
+        } else {
+            day_flag = false;
+        }
+
+        vector<double> dy_dt;
+        tuple<Ciphertext, Ciphertext> res_tup;
+        Ciphertext U_t_encrypted;
+        Plaintext U_t_plain;
+        vector<double> U_t;
         
         // Get G(t) and G(t-1)
-        double gt1 = x[x.size()-1][0];
-        double gt2 = x[x.size()-2][0];
+        double G_t_1 = y[y.size()-1][0];
+        double G_t_2 = y[y.size()-2][0];
 
-        cout << "Time point (second): " << t << endl;
-        cout << "Current glucose level: " << gt1 << endl;
+        cout << "Time point (min): " << t << endl;
+        cout << "Current glucose level: " << G_t_1 << endl;
 
         // Encrypt G(t) and G(t-1) and store them into a vector
-        Plaintext gt1_plain, gt2_plain;
-        encoder.encode(gt1, scale, gt1_plain);
-        encoder.encode(gt2, scale, gt2_plain);
-        Ciphertext gt1_encrypted, gt2_encrypted;
-        encryptor.encrypt(gt1_plain, gt1_encrypted);
-        encryptor.encrypt(gt2_plain, gt2_encrypted);
-        vector<Ciphertext> g_encrypted{gt2_encrypted, gt1_encrypted};
+        Plaintext G_t_1_plain, G_t_2_plain;
+        encoder.encode(G_t_1, scale, G_t_1_plain);
+        encoder.encode(G_t_2, scale, G_t_2_plain);
+        Ciphertext G_t_1_encrypted, G_t_2_encrypted;
+        encryptor.encrypt(G_t_1_plain, G_t_1_encrypted);
+        encryptor.encrypt(G_t_2_plain, G_t_2_encrypted);
+        vector<Ciphertext> Gs_encrypted{G_t_2_encrypted, G_t_1_encrypted};
 
         // Apply PID on encrypted blood glucose level
-        tup = pid_controller_recursive(g_encrypted, g_target_encrypted, encoder, evaluator, decryptor, 
-            relin_keys, scale, prev_sum_encrypted);
+        res_tup = pid_controller_recursive(Gs_encrypted, I_t_1_encrypted, day_flag, encoder, evaluator, decryptor, 
+            relin_keys, scale);
         
-        // Decrypt ut
-        ut_encrypted = get<0>(tup);
-        decryptor.decrypt(ut_encrypted, ut_plain);
-        encoder.decode(ut_plain, ut);
+        // Decrypt and scale U_t
+        U_t_encrypted = get<0>(res_tup);
+        decryptor.decrypt(U_t_encrypted, U_t_plain);
+        encoder.decode(U_t_plain, U_t);
+        if (U_t[0] < 0) {
+            U_t[0] = 0;
+        } else {
+            U_t[0] = 16.67 * U_t[0];
+        }
+        U.push_back(U_t[0]);
 
-        // Update previous sum
-        prev_sum_encrypted = get<1>(tup);
+        // Update I(t-1)
+        I_t_1_encrypted = get<1>(res_tup);
 
         // Bergman Minimal Model simulation
-        dx_dt = bergman(x, ut[0], m[t]);
+        dy_dt = bergman(y, U_t[0], meal_profile[t]);
         
-        // x(t) = x(t-1) + dx/dt
-        vector<double> xt;
+        // y(t) = y(t-1) + dy/dt
+        vector<double> yt;
         for (int i = 0; i < 3; i++) {
-            xt.push_back(x[x.size()-1][i]+dx_dt[i]);
+            yt.push_back(y[y.size()-1][i]+dy_dt[i]);
         }
         
-        // Append xt to x
-        x.push_back(xt);
+        // Append yt to y
+        y.push_back(yt);
     }
 
-    // double prev_sum = 0.0;
-    // vector<double> dx_dt;
-    // tuple<double, double> tup;
-    // double ut;
-
-    // // Simulation
-    // for (int t = 0; t < time_limit; t++) {
-
-    //     // Get G(t) and G(t-1)
-    //     double gt1 = x[x.size()-1][0];
-    //     double gt2 = x[x.size()-2][0];
-
-    //     // cout << "gt: " << gt << endl; 
-    //     // cout << "gt1: " << gt1 << endl;
-
-    //     vector<double> g{gt2, gt1};
-
-    //     // Apply PID on encrypted blood glucose level
-    //     tup = pid_controller_recursive_plain(g, g_target, prev_sum);
-        
-    //     ut = get<0>(tup);
-
-    //     // Update previous sum
-    //     prev_sum = get<1>(tup);
-
-    //     // Bergman Minimal Model simulation
-    //     dx_dt = bergman(x, ut, m[t]);
-        
-    //     // x(t) = x(t-1) + dx/dt
-    //     vector<double> xt;
-    //     for (int i = 0; i < 3; i++) {
-    //         xt.push_back((x[x.size()-1][i]+dx_dt[i]));
-    //     }
-        
-    //     // Append xt to x
-    //     x.push_back(xt);
-    // }
-
+    cout << "Encrypted simulation ends" << endl;
     auto recpid_stop = high_resolution_clock::now();
     auto recpid_duration = duration_cast<seconds>(recpid_stop - recpid_start);
-    cout << "Recursive PID Duration:  " << recpid_duration.count() << " seconds" << endl;
+    cout << "Encrypted simulation Duration:  " << recpid_duration.count() << " seconds" << endl;
     cout << endl;
 
     cout << "Output data" << endl;
     cout << endl;
 
-    vector<double> G, X, I;
-    G = get_column(x, 0);
-    X = get_column(x, 1);
-    I = get_column(x, 2);
-    exportData(G, "../../data/pid_bergman_recursive_local_G.csv");
-    exportData(X, "../../data/pid_bergman_recursive_local_X.csv");
-    exportData(I, "../../data/pid_bergman_recursive_local_I.csv");
-    exportData(m, "../../data/meal_profile.csv");
+    vector<double> G, X, I, G_plaintext, X_plaintext, I_plaintext;
+    G = get_column(y, 0);
+    X = get_column(y, 1);
+    I = get_column(y, 2);
+    G_plaintext = get_column(y_plaintext, 0);
+    X_plaintext = get_column(y_plaintext, 1);
+    I_plaintext = get_column(y_plaintext, 2);
+    exportData(G, "../data/pid_bergman_SEAL_G.csv");
+    exportData(X, "../data/pid_bergman_SEAL_X.csv");
+    exportData(I, "../data/pid_bergman_SEAL_I.csv");
+    exportData(U, "../data/pid_bergman_SEAL_U.csv");
+    exportData(G_plaintext, "../data/pid_bergman_plaintext_G.csv");
+    exportData(X_plaintext, "../data/pid_bergman_plaintext_X.csv");
+    exportData(I_plaintext, "../data/pid_bergman_plaintext_I.csv");
+    exportData(U_plaintext, "../data/pid_bergman_plaintext_U.csv");
     cout << endl;
 }
