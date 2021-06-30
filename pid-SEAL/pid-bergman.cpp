@@ -326,11 +326,11 @@ inline tuple<double, double> pid_controller_recursive_plain(vector<double>& Gs, 
 
     U_t = K_P * error_1 + I_t + K_P_T_D * (error_1 - error_2);
 
-    if (U_t < 0) {
-        U_t = 0;
-    } else {
-        U_t = 16.67 * U_t;
-    }
+    // if (U_t < 0) {
+    //     U_t = 0;
+    // } else {
+    //     U_t = 16.67 * U_t;
+    // }
 
     // Return ut and current sum of errors
     return make_tuple(U_t, I_t);
@@ -391,8 +391,10 @@ int main() {
     cout << "Number of slots: " << slot_count << endl;
     cout << endl;
 
+    string meal_profile_suffix = "average_4";
+
     cout << "Reading meal profile" << endl;
-    vector<double> meal_profile = csv2vec("../data/meal_profile_1.csv");
+    vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
     cout << "Meal profile imported" << endl;
 
     // Total time (mins) is defined by the length of meal profile
@@ -410,8 +412,10 @@ int main() {
     // Simulation
     for (int t = 0; t < time_limit; t++) {
         // Determine whether it is day or night
+        // Day is from 6:00-22:00
+        // One day has 1440 mins. Day is from 360 min to 1320 min
         bool day_flag;
-        if (t % 1800 <= 900) {
+        if (t % 1440 >= 360 and t % 1440 < 1320) {
             day_flag = true;
         } else {
             day_flag = false;
@@ -435,6 +439,14 @@ int main() {
         
         // Get the insulin infusion signal
         U_t_plaintext = get<0>(res_tup_plaintext);
+
+        // Normalise insulin infusion signals
+        if (U_t_plaintext < 0) {
+            U_t_plaintext = 0;
+        } else {
+            U_t_plaintext = 16.67 * U_t_plaintext;
+        }
+
         U_plaintext.push_back(U_t_plaintext);
         // Get I(t) for the recursive sum of the integral term
         I_t_1_plaintext = get<1>(res_tup_plaintext);
@@ -478,8 +490,10 @@ int main() {
     // Simulation
     for (int t = 0; t < time_limit; t++) {
         // Determine whether it is day or night
+        // Day is from 6:00-22:00
+        // One day has 1440 mins. Day is from 360 min to 1320 min
         bool day_flag;
-        if (t % 1800 <= 900) {
+        if (t % 1440 >= 360 and t % 1440 < 1320) {
             day_flag = true;
         } else {
             day_flag = false;
@@ -515,6 +529,7 @@ int main() {
         U_t_encrypted = get<0>(res_tup);
         decryptor.decrypt(U_t_encrypted, U_t_plain);
         encoder.decode(U_t_plain, U_t);
+        // Normalise insulin infusion signals
         if (U_t[0] < 0) {
             U_t[0] = 0;
         } else {
@@ -554,13 +569,13 @@ int main() {
     G_plaintext = get_column(y_plaintext, 0);
     X_plaintext = get_column(y_plaintext, 1);
     I_plaintext = get_column(y_plaintext, 2);
-    exportData(G, "../data/pid_bergman_SEAL_G.csv");
-    exportData(X, "../data/pid_bergman_SEAL_X.csv");
-    exportData(I, "../data/pid_bergman_SEAL_I.csv");
-    exportData(U, "../data/pid_bergman_SEAL_U.csv");
-    exportData(G_plaintext, "../data/pid_bergman_plaintext_G.csv");
-    exportData(X_plaintext, "../data/pid_bergman_plaintext_X.csv");
-    exportData(I_plaintext, "../data/pid_bergman_plaintext_I.csv");
-    exportData(U_plaintext, "../data/pid_bergman_plaintext_U.csv");
+    exportData(G, "../data/pid_bergman_SEAL_G_"+meal_profile_suffix+".csv");
+    exportData(X, "../data/pid_bergman_SEAL_X_"+meal_profile_suffix+".csv");
+    exportData(I, "../data/pid_bergman_SEAL_I_"+meal_profile_suffix+".csv");
+    exportData(U, "../data/pid_bergman_SEAL_U_"+meal_profile_suffix+".csv");
+    exportData(G_plaintext, "../data/pid_bergman_plaintext_G_"+meal_profile_suffix+".csv");
+    exportData(X_plaintext, "../data/pid_bergman_plaintext_X_"+meal_profile_suffix+".csv");
+    exportData(I_plaintext, "../data/pid_bergman_plaintext_I_"+meal_profile_suffix+".csv");
+    exportData(U_plaintext, "../data/pid_bergman_plaintext_U_"+meal_profile_suffix+".csv");
     cout << endl;
 }
