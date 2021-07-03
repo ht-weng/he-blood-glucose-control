@@ -391,7 +391,7 @@ int main() {
     cout << "Number of slots: " << slot_count << endl;
     cout << endl;
 
-    string meal_profile_suffix = "average_4";
+    string meal_profile_suffix = "extreme_10";
 
     cout << "Reading meal profile" << endl;
     vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
