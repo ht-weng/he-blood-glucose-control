@@ -391,10 +391,11 @@ int main() {
     cout << "Number of slots: " << slot_count << endl;
     cout << endl;
 
-    string meal_profile_suffix = "extreme_10";
+    string meal_profile_suffix = "testProfile";
 
     cout << "Reading meal profile" << endl;
-    vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
+    // vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
+    vector<double> meal_profile = csv2vec("../data/testProfile.csv");
     cout << "Meal profile imported" << endl;
 
     // Total time (mins) is defined by the length of meal profile
