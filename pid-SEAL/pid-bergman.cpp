@@ -254,6 +254,7 @@ inline tuple<Ciphertext, Ciphertext> pid_controller_recursive(vector<Ciphertext>
 
     // Encrypt parameters
     Plaintext K_P, K_P_T_I, K_P_T_D, G_target, neg_one;
+    // K_P = 0.55*70/135
     encoder.encode((0.28518519), scale, K_P);
     encoder.encode((-1), scale, neg_one);
     if (day_flag == true) {
@@ -265,6 +266,19 @@ inline tuple<Ciphertext, Ciphertext> pid_controller_recursive(vector<Ciphertext>
         encoder.encode((0.00475309), scale, K_P_T_D);
         encoder.encode((6.11), scale, G_target);
     }
+
+    // // K_P = 0.55*70/1800
+    // encoder.encode((0.021389), scale, K_P);
+    // encoder.encode((-1), scale, neg_one);
+    // if (day_flag == true) {
+    //     encoder.encode((0.00004753), scale, K_P_T_I);
+    //     encoder.encode((0.00023766), scale, K_P_T_D);
+    //     encoder.encode((5.0), scale, G_target);
+    // } else {
+    //     encoder.encode((0.00014259), scale, K_P_T_I);
+    //     encoder.encode((0.00035648), scale, K_P_T_D);
+    //     encoder.encode((6.11), scale, G_target);
+    // }
 
     Ciphertext U_t, error_1, error_2, P_term, I_term, D_term;
 
@@ -306,6 +320,7 @@ inline tuple<double, double> pid_controller_recursive_plain(vector<double>& Gs, 
 
     // Parameters
     double K_P, K_P_T_I, K_P_T_D, G_target, U_t, I_t, error_1, error_2;
+    // K_P = 0.55*70/135
     K_P = 0.28518519;
     if (day_flag == true) {
         K_P_T_I = 0.00063374;
@@ -316,6 +331,18 @@ inline tuple<double, double> pid_controller_recursive_plain(vector<double>& Gs, 
         K_P_T_D = 0.00475309;
         G_target = 6.11;
     }
+
+    // // K_P = 0.55*70/1800
+    // K_P = 0.021389;
+    // if (day_flag == true) {
+    //     K_P_T_I = 0.00004753;
+    //     K_P_T_D = 0.00023766;
+    //     G_target = 5.0;
+    // } else {
+    //     K_P_T_I = 0.00014259;
+    //     K_P_T_D = 0.00035648;
+    //     G_target = 6.11;
+    // }
 
     // e(t) = G(t) - g_target
     // e(t-1) = G(t-1) - g_target
@@ -391,11 +418,12 @@ int main() {
     cout << "Number of slots: " << slot_count << endl;
     cout << endl;
 
-    string meal_profile_suffix = "testProfile";
+    // string meal_profile_suffix = "testProfile";
+    string meal_profile_suffix = "extreme_10";
 
     cout << "Reading meal profile" << endl;
-    // vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
-    vector<double> meal_profile = csv2vec("../data/testProfile.csv");
+    vector<double> meal_profile = csv2vec("../data/meal_profile_"+meal_profile_suffix+".csv");
+    // vector<double> meal_profile = csv2vec("../data/testProfile.csv");
     cout << "Meal profile imported" << endl;
 
     // Total time (mins) is defined by the length of meal profile
